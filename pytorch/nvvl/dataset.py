@@ -169,7 +169,7 @@ class VideoDataset(torch.utils.data.Dataset):
 
     get_label : callable, optional
         callable with signature:
-            (filename : list(bytes), frame_num : int) : anything
+            (filename : str, frame_num : int) : anything
         The returned value is simply passed as an output
         alongside any returned frames.
         If None, label returned is None. (Default: None)
@@ -266,9 +266,9 @@ class VideoDataset(torch.utils.data.Dataset):
         # we want bisect_right here so the first frame in a file gets the file, not the previous file
         file_index = bisect.bisect_right(self.start_index, index)
         frame = index - self.start_index[file_index - 1] if file_index > 0 else index
-        filename = str.encode(self.filenames[file_index])
+        filename = self.filenames[file_index]
 
-        lib.nvvl_read_sequence(self.loader, filename,
+        lib.nvvl_read_sequence(self.loader, str.encode(filename),
                                frame, self.sequence_length)
         self.seq_info_queue.append((filename, frame))
         self.samples_left += 1
