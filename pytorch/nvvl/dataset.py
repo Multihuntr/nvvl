@@ -366,12 +366,12 @@ class VideoDataset(torch.utils.data.Dataset):
 
         self._read_sample(index)
         tensor_map = self._create_tensor_map()
-        seq, _ = self._start_receive(tensor_map)
+        seq, label = self._start_receive(tensor_map)
         self._finish_receive(True)
 
         if len(tensor_map) == 1 and "default" in tensor_map:
-            return tensor_map["default"][0].cpu()
-        return {name: tensor[0].cpu() for name, tensor in tensor_map.items()}
+            return tensor_map["default"][0].cpu(), label
+        return {name: tensor[0].cpu() for name, tensor in tensor_map.items()}, label
 
     def __len__(self):
         return self.total_frames
