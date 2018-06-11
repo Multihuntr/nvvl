@@ -350,7 +350,6 @@ void VideoLoader::impl::read_file() {
     // av_packet_unref is unlike the other libav free functions
     using pkt_ptr = std::unique_ptr<AVPacket, decltype(&av_packet_unref)>;
     auto raw_pkt = AVPacket{};
-    auto seek_hack = 1;
     while (!done_) {
         if (done_) {
             break;
@@ -380,8 +379,9 @@ void VideoLoader::impl::read_file() {
         // another key frame to start decoding again
         seek(file, req.frame);
 
-        auto nonkey_frame_count = 0;
-        while (req.count > 0 && av_read_frame(file.fmt_ctx_.get(), &raw_pkt) >= 0) {
+        bool got_frame[req.count] = {false};
+        auto frames_left = req.count;
+        while (frames_left > 0 && av_read_frame(file.fmt_ctx_.get(), &raw_pkt) >= 0) {
             auto pkt = pkt_ptr(&raw_pkt, av_packet_unref);
 
             stats_.bytes_read += pkt->size;
@@ -398,55 +398,11 @@ void VideoLoader::impl::read_file() {
             file.last_frame_ = frame;
             auto key = pkt->flags & AV_PKT_FLAG_KEY;
 
-            // The following assumes that all frames between key frames
-            // have pts between the key frames.  Is that true?
-            if (frame >= req.frame) {
-                if (key) {
-                    static auto final_try = false;
-                    if (frame > req.frame + nonkey_frame_count) {
-                        log_.debug() << device_id_ << ": We got ahead of ourselves! "
-                                     << frame << " > " << req.frame << " + "
-                                     << nonkey_frame_count
-                                     << " seek_hack = " << seek_hack << std::endl;
-                        seek_hack *= 2;
-                        if (final_try) {
-                            std::stringstream ss;
-                            ss << device_id_ << ": I give up, I can't get it to seek to frame "
-                               << req.frame;
-                            throw std::runtime_error(ss.str());
-                        }
-                        if (req.frame > seek_hack) {
-                            seek(file, req.frame - seek_hack);
-                        } else {
-                            final_try = true;
-                            seek(file, 0);
-                        }
-                        continue;
-                    } else {
-                        req.frame += nonkey_frame_count + 1;
-                        req.count -= nonkey_frame_count + 1;
-                        nonkey_frame_count = 0;
-                    }
-                    final_try = false;
-                } else {
-                    nonkey_frame_count++;
-                    // A hueristic so we don't go way over... what should "20" be?
-                    if (frame > req.frame + req.count + 20) {
-                        // This should end the loop
-                        req.frame += nonkey_frame_count;
-                        req.count -= nonkey_frame_count;
-                        nonkey_frame_count = 0;
-                    }
-                }
-            }
-            seek_hack = 1;
-
             log_.info() << device_id_ << ": Sending " << (key ? "  key " : "nonkey")
                         << " frame " << frame << " to the decoder."
                         << " size = " << pkt->size
                         << " req.frame = " << req.frame
                         << " req.count = " << req.count
-                        << " nonkey_frame_count = " << nonkey_frame_count
                         << std::endl;
 
             stats_.bytes_decoded += pkt->size;
@@ -506,6 +462,12 @@ void VideoLoader::impl::read_file() {
 #endif
             } else {
                 vid_decoder_->decode_packet(pkt.get());
+            }
+
+            auto idx = frame-req.frame;
+            if (idx >= 0 && idx < req.count && !got_frame[idx]) {
+                got_frame[idx] = true;
+                frames_left--;
             }
         }
         // flush the decoder
